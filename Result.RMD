@@ -1,0 +1,158 @@
+---
+title: "Practical Machine Learning Project - weight lifting exercise evaluation based on wearable accelerometers data."
+output: html_document
+---
+# Synopsys
+This documents was made as a part of [course project](https://class.coursera.org/predmachlearn-032/human_grading/view/courses/975201/assessments/4/submissions). I'll build some random forest models to categorize weight lifting exercise using some of the given properties, choose most appropriate one (based on cross-validation set and common sense), evaluate out of sample error and predict category for testing set. I'll show that with 40 properties (out of 159) it's possible to build random forest model with estimated out of sample error ~1%.
+
+# Load and preprocessin data
+Some properties seems to be numeric, but contains "#DIV/0!" values. May be it should be replaced with some large constant, but in this project I choose to replace it with NA (Not Available) value.
+
+
+```{r, cache=TRUE, warning=FALSE}
+setwd("C:/Y/Prog/R/08 Practical Machine Learning/Project/")
+library(randomForest)  
+library(AppliedPredictiveModeling)
+library(caret)
+
+df.source.test <- read.csv("./Data/pml-testing.csv", stringsAsFactors = TRUE, 
+                    na.strings = c("NA", "#DIV/0!", ""))
+
+df.source.train <- read.csv("./Data/pml-training.csv", stringsAsFactors = TRUE, 
+                     na.strings = c("NA", "#DIV/0!", ""))
+
+#summary(df.source.train)
+```
+# Exploratory Data Analysis
+In this case analysis is very simple - summary(df.source.train) (omitted due to large output) shows that:
+* some property contains many NA values 
+* 60 property (including property to predict) have non-NA values for all rows
+* some property some "physical" meaning than seem to be relevant for prediction, and some (like user_name) don't 
+
+# Preprare properties sets 
+Construct three property sets:  
+1. all not-NA properties (randomForest by defalult does not work with NA values)  
+2. all not-NA properties that have some physical meaning   
+3. all not-NA properties that have some physical meaning and not have "magnet" word in property name  
+
+```{r, cache=TRUE, warning=FALSE}
+
+col.filtered <- c()
+col.filtered.phys <- c()
+col.filtered.no.magnet <- c()
+
+for(i in c(1:ncol(df.source.train)))
+{
+    if ( nrow( df.source.train[!is.na(df.source.train[,i]),]) == nrow(df.source.train) )
+    {        
+        col.filtered <- c(col.filtered, i)    
+        #print(paste0(colnames(df.source.train)[i], " ", i))
+        if (        colnames(df.source.train)[i] != "X" & 
+                    colnames(df.source.train)[i] != "user_name" & 
+                    colnames(df.source.train)[i] != "raw_timestamp_part_1" & 
+                    colnames(df.source.train)[i] != "raw_timestamp_part_2" & 
+                    colnames(df.source.train)[i] != "cvtd_timestamp" & 
+                    colnames(df.source.train)[i] != "new_window" & 
+                    colnames(df.source.train)[i] != "num_window" 
+        )
+        {
+            col.filtered.phys <- c(col.filtered.phys, i)                
+            if ( grepl("magnet", colnames(df.source.train)[i]) == FALSE)
+            {
+                col.filtered.no.magnet <- c(col.filtered.no.magnet, i)                       
+            }
+        }
+    }    
+}
+
+col.filtered.phys.belt <- c("gyros_belt_x",
+                        "gyros_belt_y",
+                        "gyros_belt_z",
+                        "accel_belt_x",
+                        "accel_belt_y",
+                        "accel_belt_z",
+                        "classe")
+
+```
+
+
+# Split training data in training, cross-validation and testing sets.
+
+```{r, cache=TRUE, warning=FALSE}
+set.seed(1234)
+test.percent <- 20
+cv.percent <- 30
+train.percent <- 100 - test.percent - cv.percent
+
+is.test <- createDataPartition(df.source.train$classe, p = test.percent/100.0)[[1]]
+df.test <- df.source.train[ is.test, ]
+df.rest <- df.source.train[ -is.test, ]
+is.train <- createDataPartition(df.rest$classe, 
+                    p = train.percent / (cv.percent + train.percent))[[1]]
+df.train <- df.rest[ is.train,]
+df.cv <- df.rest[ -is.train,]
+
+```
+
+# Building models: random forest on different properties set and evaluate them on cross-validation set
+
+```{r, cache=TRUE, warning=FALSE}
+rf.full <- randomForest(classe ~ ., df.train[,col.filtered]) 
+predicted.cv <- predict(rf.full, df.cv)
+print(paste0("Model: random forest on all not-NA properties. Properties count ", 
+             length(col.filtered) - 1 ))
+print(paste0("Accuracy in cv set: ", 
+             nrow(df.cv[ df.cv$classe == predicted.cv,  ]) / nrow(df.cv) ) ) 
+
+rf.phys <- randomForest(classe ~ ., df.train[,col.filtered.phys]) 
+predicted.cv <- predict(rf.phys, df.cv)
+print(paste0("Model: random forest on not-NA 'physical' properties. Properties count ", 
+             length(col.filtered.phys) - 1 ))
+print(paste0("Accuracy in cv set: ", 
+                   nrow(df.cv[ df.cv$classe == predicted.cv,  ]) / nrow(df.cv) ) ) 
+
+rf.no.magnet <- randomForest(classe ~ ., df.train[,col.filtered.no.magnet ]) 
+predicted.cv <- predict(rf.no.magnet, df.cv)
+print(paste0("Model: random forest on all not-NA 'physical' properties exclude properties with 'magnet' word. Properties count ", 
+             length(col.filtered.no.magnet) - 1 ))
+print(paste0("Accuracy in cv set: ", 
+             nrow(df.cv[ df.cv$classe == predicted.cv,  ]) / nrow(df.cv) ) ) 
+
+rf.phys.belt <- randomForest(classe ~ ., df.train[,col.filtered.phys.belt]) 
+predicted.cv <- predict(rf.phys.belt, df.cv)
+print(paste0("Model: random forest on belt properties. Properties count ", 
+             length(col.filtered.phys.belt) - 1 ))
+print(paste0("Accuracy in cv set: ", 
+             nrow(df.cv[ df.cv$classe == predicted.cv,  ]) / nrow(df.cv) ) ) 
+
+```
+# Choose model  
+I choose model with "high enough" accuracy (measured by contol validation set) and smallest amount of included in model properties - model with 40 properties (all not-NA 'physical' properties exclude properties with 'magnet' word) and ~99% accuracy (measured by cross validation set).
+
+# Estimate out of sample error
+```{r, cache=TRUE, warning=FALSE}
+
+predicted.test <- predict(rf.no.magnet, df.test)
+print(paste0("Estimate out of sample error for choosen model: ", 
+      1 - nrow(df.test[ df.test$classe == predicted.test,  ]) / nrow(df.test) ) ) 
+
+```
+
+
+# Predict values by choosen model
+```{r, cache=TRUE, warning=FALSE}
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+predicted.source.test <- predict(rf.no.magnet, df.source.test)
+#print(predicted.source.test)
+pml_write_files(predicted.source.test)
+
+```
+
+# Conclusion 
+Very low estimation of out of sample error (~1%) may be suspicious, but 20 correctly predicted cases in the assesment  gives hope that there is no big mistakes in this project. 
